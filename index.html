@@ -16,16 +16,20 @@
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500;1,600&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html,body{height:100%;background:#0b0d12;overscroll-behavior:none}
-body{font-family:'Figtree',system-ui,-apple-system,sans-serif;display:flex;justify-content:center;align-items:center;-webkit-font-smoothing:antialiased}
+/* El fondo de la página es el del tema: si iOS deja ver algo por detrás (rebote, barra de estado), no hay franjas negras */
+html,body{height:100%;background:var(--page-bg,#1d2b3a);overscroll-behavior:none;overflow:hidden}
+body{font-family:'Figtree',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;-webkit-touch-callout:none}
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;touch-action:manipulation}
 input,textarea{font:inherit;color:inherit}
 :root{--serif:'Cormorant Garamond',Georgia,'Times New Roman',serif;--accent:#ff5a6e;--sheet:#f6f3ee;--sheet-text:#1c2026}
 
-/* Columna de móvil: a pantalla completa en el teléfono, centrada y estrecha en ordenador */
-#app{position:relative;width:100%;max-width:440px;height:100dvh;overflow:hidden;color:var(--text);isolation:isolate}
-@media (min-width:600px) and (min-height:700px){
-  #app{height:min(100dvh - 40px,900px);border-radius:40px;box-shadow:0 30px 80px rgba(0,0,0,.5),0 0 0 10px #000}
+/* En el móvil la app ocupa toda la pantalla, de borde a borde (también bajo la barra de estado
+   y la del botón de inicio). Solo en un ordenador con ratón se muestra como un teléfono centrado. */
+#app{position:fixed;inset:0;overflow:hidden;color:var(--text);isolation:isolate}
+@media (hover:hover) and (pointer:fine) and (min-width:600px) and (min-height:700px){
+  html,body{background:#0b0d12}
+  body{display:flex;justify-content:center;align-items:center}
+  #app{position:relative;inset:auto;width:100%;max-width:440px;height:min(100dvh - 40px,900px);border-radius:40px;box-shadow:0 30px 80px rgba(0,0,0,.5),0 0 0 10px #000}
 }
 
 .bg{position:absolute;inset:0;z-index:-2;transition:opacity .45s ease}
@@ -336,7 +340,6 @@ const OBSTACLES = [
 const STYLES = [
   { id: 'originales', title: 'Frases breves y actuales', sub: 'Directas, para el día a día' },
   { id: 'clasicos', title: 'Sabiduría de los clásicos', sub: 'Séneca, Marco Aurelio, Lao Tse…' },
-  { id: 'ambas', title: 'De todo un poco', sub: 'Una mezcla de las dos' },
 ];
 const MOMENTS = [
   { id: 'despertar', title: 'Al empezar el día', time: '8:30', icon: 'sunrise' },
@@ -390,13 +393,24 @@ const ico = (name, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24" aria-h
 const KEY = 'impulso.web.v1';
 const DEFAULTS = {
   favs: [], cat: 'general', theme: 'marea', streak: 0, lastDay: null, seenHint: false,
-  onboardingDone: false, profile: { name: '', focus: null, area: null, goal: '', horizon: 'sinFecha', goalStart: null, obstacles: [], style: 'ambas', moments: [] },
+  onboardingDone: false, profile: { name: '', focus: [], area: [], goal: '', horizon: 'sinFecha', goalStart: null, obstacles: [], style: ['originales', 'clasicos'], moments: [] },
   progressDays: [], widgetGuideSeen: false,
 };
 let S;
 try { S = Object.assign(structuredClone(DEFAULTS), JSON.parse(localStorage.getItem(KEY) || '{}')); }
 catch { S = structuredClone(DEFAULTS); }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
+
+// Las preguntas «qué quieres conseguir», «parte de tu vida» y «tipo de frases» admiten varias
+// respuestas. Convierte las respuestas guardadas por la versión anterior (una sola) en listas.
+const asList = v => Array.isArray(v) ? v : v ? [v] : [];
+S.profile = Object.assign(structuredClone(DEFAULTS.profile), S.profile);
+S.profile.focus = asList(S.profile.focus);
+S.profile.area = asList(S.profile.area);
+S.profile.style = S.profile.style === 'ambas' ? ['originales', 'clasicos'] : asList(S.profile.style);
+if (!S.profile.style.length) S.profile.style = ['originales', 'clasicos'];
+const firstArea = p => AREAS.find(a => a.id === p.area[0]);
+const toggleIn = (list, id) => list.includes(id) ? list.filter(x => x !== id) : [...list, id];
 
 /* ---------- Utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -412,12 +426,13 @@ const hexRgb = h => { const v = parseInt(h.slice(1), 16); return [(v >> 16) & 25
 function weightsOf(p) {
   const r = {};
   const add = w => { for (const k in w) r[k] = (r[k] || 0) + w[k]; };
-  const f = FOCUS.find(x => x.id === p.focus); if (f) add(f.w);
-  const a = AREAS.find(x => x.id === p.area); if (a) add(a.w);
+  FOCUS.filter(x => p.focus.includes(x.id)).forEach(f => add(f.w));
+  AREAS.filter(x => p.area.includes(x.id)).forEach(a => add(a.w));
   (p.obstacles || []).forEach(id => { const o = OBSTACLES.find(x => x.id === id); if (o) add(o.w); });
   return r;
 }
-const matchesStyle = (p, q) => p.style === 'originales' ? !q.author : p.style === 'clasicos' ? !!q.author : true;
+// Con los dos estilos marcados (o ninguno) valen todas las frases.
+const matchesStyle = (p, q) => p.style.length !== 1 ? true : p.style[0] === 'clasicos' ? !!q.author : !q.author;
 function personalized(p) {
   const w = weightsOf(p);
   if (!Object.keys(w).length) return QUOTES.filter(q => matchesStyle(p, q));
@@ -467,6 +482,8 @@ function applyTheme() {
   app.style.setProperty('--on-text', t.light ? '#ffffff' : '#1c2026');
   app.style.setProperty('--edge', t.light ? 'rgba(255,255,255,.32)' : 'rgba(0,0,0,.26)');
   document.querySelector('meta[name=theme-color]').content = t.bg.match(/#[0-9a-f]{6}/i)[0];
+  // Lo que asome por detrás de la app (rebote de Safari, barras del sistema) tiene el color del tema.
+  document.documentElement.style.setProperty('--page-bg', t.bg.match(/#[0-9a-f]{6}/i)[0]);
 }
 
 /* ---------- Racha ---------- */
@@ -560,7 +577,7 @@ function goalCard() {
   const p = S.profile, done = S.progressDays.includes(dayKey(new Date()));
   const day = p.goalStart ? Math.max(daysBetween(new Date(p.goalStart), new Date()), 0) + 1 : 1;
   const hz = HORIZONS.find(h => h.id === p.horizon);
-  const area = AREAS.find(a => a.id === p.area);
+  const area = firstArea(p);
   const n = S.progressDays.length;
   const el = document.createElement('section');
   el.className = 'card';
@@ -709,8 +726,11 @@ function bellSheet(body) {
 /* ---------- Tus respuestas (editar el perfil) ---------- */
 function profileSheet(body) {
   const p = S.profile;
-  const f = FOCUS.find(x => x.id === p.focus), a = AREAS.find(x => x.id === p.area);
-  const st = STYLES.find(x => x.id === p.style), hz = HORIZONS.find(h => h.id === p.horizon);
+  const fs = FOCUS.filter(x => p.focus.includes(x.id)), as = AREAS.filter(x => p.area.includes(x.id));
+  const f = fs.length && { icon: fs[0].icon, title: listY(fs.map(x => x.title)) };
+  const a = as.length && { icon: as[0].icon, title: listY(as.map(x => x.title)) };
+  const st = p.style.length === 1 ? STYLES.find(x => x.id === p.style[0]) : { title: 'De los dos tipos' };
+  const hz = HORIZONS.find(h => h.id === p.horizon);
   const obs = listY(OBSTACLES.filter(o => p.obstacles.includes(o.id)).map(o => o.title.toLowerCase()));
   const times = listY(MOMENTS.filter(m => p.moments.includes(m.id)).map(m => m.time));
   const goal = p.goal.trim();
@@ -858,19 +878,19 @@ function renderOnb() {
       after = () => { const inp = $('#nameIn'); inp.oninput = () => draft.name = inp.value; inp.onkeydown = e => { if (e.key === 'Enter') go(1); }; };
       break;
     case 'focus':
-      body = head(name ? `${esc(name)}, ¿qué quieres conseguir con Impulso?` : '¿Qué quieres conseguir con Impulso?', 'Elige lo que más te importa ahora mismo.') +
-        `<div class="opts">${FOCUS.map(f => opt({ title: f.title, sub: f.sub, icon: f.icon, on: draft.focus === f.id })).join('')}</div>`;
-      foot = `<button class="primary press" data-a="next" ${draft.focus ? '' : 'disabled'}>Continuar</button>`;
-      after = () => onb.querySelectorAll('.opt').forEach((b, k) => b.onclick = () => { draft.focus = FOCUS[k].id; renderOnb(true); });
+      body = head(name ? `${esc(name)}, ¿qué quieres conseguir con Impulso?` : '¿Qué quieres conseguir con Impulso?', 'Elige todas las que quieras.') +
+        `<div class="opts">${FOCUS.map(f => opt({ title: f.title, sub: f.sub, icon: f.icon, on: draft.focus.includes(f.id), multi: true })).join('')}</div>`;
+      foot = `<button class="primary press" data-a="next" ${draft.focus.length ? '' : 'disabled'}>Continuar</button>`;
+      after = () => onb.querySelectorAll('.opt').forEach((b, k) => b.onclick = () => { draft.focus = toggleIn(draft.focus, FOCUS[k].id); renderOnb(true); });
       break;
     case 'area':
-      body = head('¿En qué parte de tu vida quieres avanzar?', 'Elige la que más te importe ahora. Podrás cambiarla cuando quieras.') +
-        `<div class="opts">${AREAS.map(a => opt({ title: a.title, icon: a.icon, on: draft.area === a.id })).join('')}</div>`;
-      foot = `<button class="primary press" data-a="next" ${draft.area ? '' : 'disabled'}>Continuar</button>`;
-      after = () => onb.querySelectorAll('.opt').forEach((b, k) => b.onclick = () => { draft.area = AREAS[k].id; renderOnb(true); });
+      body = head('¿En qué partes de tu vida quieres avanzar?', 'Elige todas las que quieras. Podrás cambiarlas cuando quieras.') +
+        `<div class="opts">${AREAS.map(a => opt({ title: a.title, icon: a.icon, on: draft.area.includes(a.id), multi: true })).join('')}</div>`;
+      foot = `<button class="primary press" data-a="next" ${draft.area.length ? '' : 'disabled'}>Continuar</button>`;
+      after = () => onb.querySelectorAll('.opt').forEach((b, k) => b.onclick = () => { draft.area = toggleIn(draft.area, AREAS[k].id); renderOnb(true); });
       break;
     case 'goal': {
-      const area = AREAS.find(a => a.id === draft.area);
+      const area = firstArea(draft);
       body = head('¿Cuál es tu objetivo?', 'Escríbelo en una frase. Te lo recordaremos cada día para que no lo pierdas de vista.') +
         `<textarea class="field glass" id="goalIn" rows="3" maxlength="140" enterkeyhint="done" aria-label="Objetivo" placeholder="${esc(area ? area.ex : 'Ej.: terminar mi primer proyecto')}">${esc(draft.goal)}</textarea>
         <p style="font-size:16px;font-weight:600;margin-top:22px">¿Para cuándo?</p>
@@ -892,9 +912,9 @@ function renderOnb() {
       break;
     case 'style':
       body = head('¿Qué frases te llegan más?') +
-        `<div class="opts">${STYLES.map(s => opt({ title: s.title, sub: s.sub, on: draft.style === s.id })).join('')}</div>`;
-      foot = `<button class="primary press" data-a="next">Continuar</button>`;
-      after = () => onb.querySelectorAll('.opt').forEach((b, k) => b.onclick = () => { draft.style = STYLES[k].id; renderOnb(true); });
+        `<p class="q-sub">Marca una o las dos.</p><div class="opts">${STYLES.map(s => opt({ title: s.title, sub: s.sub, on: draft.style.includes(s.id), multi: true })).join('')}</div>`;
+      foot = `<button class="primary press" data-a="next" ${draft.style.length ? '' : 'disabled'}>Continuar</button>`;
+      after = () => onb.querySelectorAll('.opt').forEach((b, k) => b.onclick = () => { draft.style = toggleIn(draft.style, STYLES[k].id); renderOnb(true); });
       break;
     case 'moments':
       body = head('¿Cuándo te vendría bien un impulso?', 'En la app de iPhone te enviaremos una frase en esos momentos. Si no quieres avisos, no marques ninguno.') +
@@ -918,7 +938,7 @@ function renderOnb() {
     case 'summary': {
       const cats = topCats(draft, 3).map(catName);
       const times = listY(MOMENTS.filter(m => draft.moments.includes(m.id)).map(m => m.time));
-      const area = AREAS.find(a => a.id === draft.area);
+      const area = firstArea(draft);
       const hz = HORIZONS.find(h => h.id === draft.horizon);
       const goal = draft.goal.trim();
       const card = (icon, title, text) => `<div class="sum glass">${ico(icon)}<div><small>${title}</small><p>${text}</p></div></div>`;
@@ -935,7 +955,7 @@ function renderOnb() {
   }
 
   if (editing) {
-    const needs = (step === 'focus' && !draft.focus) || (step === 'area' && !draft.area);
+    const needs = (step === 'focus' && !draft.focus.length) || (step === 'area' && !draft.area.length) || (step === 'style' && !draft.style.length);
     foot = `<button class="primary press" data-a="save" ${needs ? 'disabled' : ''}>Guardar</button><button class="secondary" data-a="cancel">Cancelar</button>`;
   }
 
