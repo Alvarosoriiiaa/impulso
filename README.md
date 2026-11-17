@@ -4,4 +4,4 @@ Versión web, pensada para móvil, de Impulso: frases motivacionales a pantalla 
 
 Ábrela en el iPhone y usa *Compartir › Añadir a pantalla de inicio* para tenerla como una app.
 
-Los recordatorios y los widgets solo están en la app nativa de iPhone.
+**Widget:** `impulso-widget.js` es un widget para la app gratuita Scriptable que muestra la frase del día en la pantalla de bloqueo o de inicio. La propia app explica cómo instalarlo (campana › Widgets).
