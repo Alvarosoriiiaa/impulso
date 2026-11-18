@@ -23,17 +23,29 @@ const THEMES = {
   oceano:  { colors: ["#022b44", "#05607a", "#3fb1b0"], text: "#f0fbfb", scrim: 0.14 },
 };
 
-// Frases: se descargan de la web y se guardan para funcionar también sin conexión.
+// Frases: se guardan en el móvil. Los widgets usan la copia guardada (es instantáneo) y solo
+// la descargan de nuevo si tiene más de un día; la descarga tiene un tiempo máximo para que
+// el widget de la pantalla de bloqueo nunca se quede vacío esperando.
 async function loadQuotes() {
   const fm = FileManager.local();
   const cache = fm.joinPath(fm.documentsDirectory(), "impulso-quotes.json");
+  const hasCache = fm.fileExists(cache);
+  const fresh = hasCache && (Date.now() - fm.modificationDate(cache).getTime()) < 24 * 3600 * 1000;
+  if (hasCache && fresh && config.runsInWidget) {
+    try { return JSON.parse(fm.readString(cache)); } catch (e) {}
+  }
   try {
-    const quotes = await new Request(QUOTES_URL).loadJSON();
+    const req = new Request(QUOTES_URL);
+    req.timeoutInterval = config.runsInWidget ? 6 : 15;
+    const quotes = await req.loadJSON();
+    if (!Array.isArray(quotes) || !quotes.length) throw new Error("lista vacía");
     fm.writeString(cache, JSON.stringify(quotes));
     return quotes;
   } catch (e) {
-    if (fm.fileExists(cache)) return JSON.parse(fm.readString(cache));
-    return [{ text: "Conéctate a internet una vez para cargar tus frases." }];
+    if (hasCache) {
+      try { return JSON.parse(fm.readString(cache)); } catch (e2) {}
+    }
+    return [{ text: "Abre Impulso en Scriptable con internet una vez para cargar tus frases." }];
   }
 }
 
@@ -57,12 +69,8 @@ function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
-const quotes = await loadQuotes();
-const q = quoteOfTheDay(quotes, new Date());
-const theme = THEMES[(args.widgetParameter || "").trim().toLowerCase()] || THEMES.marea;
-
 // ---------- Dentro de Scriptable: la frase a pantalla completa ----------
-if (!config.runsInWidget) {
+async function showFullScreen(q, theme) {
   const colors = theme.colors.map(c => darken(c, theme.scrim));
   const html = `<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -85,91 +93,107 @@ if (!config.runsInWidget) {
   ${q.author ? `<div class="author">${esc(q.author.toUpperCase())}</div>` : ""}
 </body></html>`;
   await WebView.loadHTML(html, null, null, true); // true = pantalla completa
-  Script.complete();
-  return;
 }
 
 // ---------- Widget ----------
-const family = config.widgetFamily || "large";
+function buildWidget(q, theme, family) {
+  const w = new ListWidget();
+  w.url = APP_URL;
+  const midnight = new Date();
+  midnight.setHours(24, 0, 30, 0);
+  w.refreshAfterDate = midnight;
 
-const w = new ListWidget();
-w.url = APP_URL;
-const midnight = new Date();
-midnight.setHours(24, 0, 30, 0);
-w.refreshAfterDate = midnight;
+  if (family === "accessoryInline") {
+    // Pantalla de bloqueo: una línea encima de la hora
+    const t = w.addText("❝ " + q.text);
+    t.lineLimit = 1;
+    t.minimumScaleFactor = 0.7;
+  } else if (family === "accessoryCircular") {
+    // Pantalla de bloqueo: círculo pequeño. Al tocarlo se abre la app con la frase.
+    w.addAccessoryWidgetBackground = true;
+    w.setPadding(4, 4, 4, 4);
+    w.addSpacer();
+    const mark = w.addText("❝");
+    mark.font = Font.boldSystemFont(18);
+    mark.centerAlignText();
+    const day = w.addText(String(new Date().getDate()));
+    day.font = Font.boldRoundedSystemFont(14);
+    day.centerAlignText();
+    w.addSpacer();
+  } else if (family.startsWith("accessory")) {
+    // Pantalla de bloqueo: rectángulo debajo de la hora
+    w.setPadding(0, 0, 0, 0);
+    const t = w.addText(q.text);
+    t.font = Font.mediumSystemFont(13);
+    t.minimumScaleFactor = 0.5;
+    t.lineLimit = q.author ? 3 : 4;
+    if (q.author) {
+      const a = w.addText(q.author);
+      a.font = Font.systemFont(10);
+      a.textOpacity = 0.7;
+      a.lineLimit = 1;
+    }
+  } else {
+    // Pantalla de inicio, vista «Hoy» y StandBy: pequeño, mediano, grande y extra grande (iPad).
+    // El degradado ocupa todo el widget y la frase se agranda para llenarlo.
+    const g = new LinearGradient();
+    g.colors = theme.colors.map(c => new Color(darken(c, theme.scrim)));
+    g.locations = theme.colors.map((_, i) => i / (theme.colors.length - 1));
+    g.startPoint = new Point(0.3, 0);
+    g.endPoint = new Point(0.7, 1);
+    w.backgroundGradient = g;
 
-if (family === "accessoryInline") {
-  // Pantalla de bloqueo: una línea encima de la hora
-  const t = w.addText("❝ " + q.text);
-  t.lineLimit = 1;
-  t.minimumScaleFactor = 0.7;
-} else if (family === "accessoryCircular") {
-  // Pantalla de bloqueo: círculo pequeño debajo de la hora. Al tocarlo se abre la frase completa.
-  w.addAccessoryWidgetBackground = true;
-  w.setPadding(4, 4, 4, 4);
-  w.addSpacer();
-  const row = w.addStack();
-  row.addSpacer();
-  const icon = row.addImage(SFSymbol.named("quote.opening").image);
-  icon.imageSize = new Size(16, 16);
-  icon.tintColor = Color.white();
-  row.addSpacer();
-  w.addSpacer(2);
-  const day = w.addText(String(new Date().getDate()));
-  day.font = Font.boldRoundedSystemFont(15);
-  day.centerAlignText();
-  w.addSpacer();
-} else if (family.startsWith("accessory")) {
-  // Pantalla de bloqueo: rectángulo debajo de la hora
-  const t = w.addText(q.text);
-  t.font = Font.mediumSystemFont(13);
-  t.minimumScaleFactor = 0.6;
-  t.lineLimit = q.author ? 3 : 4;
-  if (q.author) {
-    const a = w.addText(q.author);
-    a.font = Font.systemFont(10);
-    a.textOpacity = 0.7;
-    a.lineLimit = 1;
+    const big = family === "large" || family === "extraLarge";
+    const pad = big ? 18 : 12;
+    w.setPadding(pad, pad, pad, pad);
+
+    // Tamaño grande de partida; minimumScaleFactor lo reduce lo justo para que quepa
+    const size = { small: 26, medium: 30, large: 44, extraLarge: 56 }[family] || 30;
+
+    if (big) {
+      const label = w.addText("FRASE DEL DÍA");
+      label.font = Font.semiboldSystemFont(family === "extraLarge" ? 14 : 12);
+      label.textColor = new Color(theme.text, 0.75);
+      label.centerAlignText();
+      w.addSpacer(8);
+    }
+    w.addSpacer();
+    const t = w.addText(q.text);
+    t.font = new Font("Georgia", size);
+    t.textColor = new Color(theme.text);
+    t.centerAlignText();
+    t.minimumScaleFactor = 0.25;
+    if (q.author) {
+      w.addSpacer(big ? 10 : 6);
+      const a = w.addText(q.author.toUpperCase());
+      a.font = Font.semiboldSystemFont(family === "small" ? 9 : big ? 13 : 11);
+      a.textColor = new Color(theme.text, 0.8);
+      a.centerAlignText();
+      a.lineLimit = 1;
+    }
+    w.addSpacer();
   }
-} else {
-  // Pantalla de inicio, vista «Hoy» y StandBy: pequeño, mediano, grande y extra grande (iPad).
-  // El degradado ocupa todo el widget y la frase se agranda para llenarlo.
-  const g = new LinearGradient();
-  g.colors = theme.colors.map(c => new Color(darken(c, theme.scrim)));
-  g.locations = theme.colors.map((_, i) => i / (theme.colors.length - 1));
-  g.startPoint = new Point(0.3, 0);
-  g.endPoint = new Point(0.7, 1);
-  w.backgroundGradient = g;
-
-  const big = family === "large" || family === "extraLarge";
-  w.setPadding(big ? 18 : 12, big ? 18 : 12, big ? 18 : 12, big ? 18 : 12);
-
-  // Tamaño grande de partida; minimumScaleFactor lo reduce lo justo para que quepa
-  const size = { small: 26, medium: 30, large: 44, extraLarge: 56 }[family] || 30;
-
-  if (big) {
-    const label = w.addText("FRASE DEL DÍA");
-    label.font = Font.semiboldSystemFont(family === "extraLarge" ? 14 : 12);
-    label.textColor = new Color(theme.text, 0.75);
-    label.centerAlignText();
-    w.addSpacer(8);
-  }
-  w.addSpacer();
-  const t = w.addText(q.text);
-  t.font = new Font("Georgia", size);
-  t.textColor = new Color(theme.text);
-  t.centerAlignText();
-  t.minimumScaleFactor = 0.25;
-  if (q.author) {
-    w.addSpacer(big ? 10 : 6);
-    const a = w.addText(q.author.toUpperCase());
-    a.font = Font.semiboldSystemFont(family === "small" ? 9 : big ? 13 : 11);
-    a.textColor = new Color(theme.text, 0.8);
-    a.centerAlignText();
-    a.lineLimit = 1;
-  }
-  w.addSpacer();
+  return w;
 }
 
-Script.setWidget(w);
+// ---------- Inicio ----------
+try {
+  const quotes = await loadQuotes();
+  const q = quoteOfTheDay(quotes, new Date()) || quotes[0];
+  const theme = THEMES[(args.widgetParameter || "").trim().toLowerCase()] || THEMES.marea;
+
+  if (config.runsInWidget) {
+    Script.setWidget(buildWidget(q, theme, config.widgetFamily || "medium"));
+  } else {
+    await showFullScreen(q, theme);
+  }
+} catch (e) {
+  // Si algo falla, el widget muestra el error en vez de quedarse vacío
+  const w = new ListWidget();
+  const t = w.addText("Impulso: " + e.message);
+  t.font = Font.systemFont(11);
+  t.minimumScaleFactor = 0.5;
+  if (config.runsInWidget) Script.setWidget(w);
+  else await w.presentSmall();
+}
 Script.complete();
