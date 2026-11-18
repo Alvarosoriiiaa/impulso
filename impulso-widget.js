@@ -1,7 +1,7 @@
 // Impulso · Frase del día
 // Widget para la app Scriptable (iPhone). Muestra la misma frase del día que la app Impulso.
-// Funciona con todos los tamaños de widget:
-//   Pantalla de bloqueo: en línea (encima de la hora), rectangular y circular.
+// Tamaños de widget:
+//   Pantalla de bloqueo: rectangular (debajo de la hora) o en línea (encima de la hora).
 //   Pantalla de inicio, vista «Hoy» y StandBy: pequeño, mediano, grande y extra grande (iPad).
 // Se actualiza solo cada medianoche.
 // Si abres el script dentro de Scriptable, la frase se muestra a pantalla completa.
@@ -108,18 +108,6 @@ function buildWidget(q, theme, family) {
     const t = w.addText("❝ " + q.text);
     t.lineLimit = 1;
     t.minimumScaleFactor = 0.7;
-  } else if (family === "accessoryCircular") {
-    // Pantalla de bloqueo: círculo pequeño. Al tocarlo se abre la app con la frase.
-    w.addAccessoryWidgetBackground = true;
-    w.setPadding(4, 4, 4, 4);
-    w.addSpacer();
-    const mark = w.addText("❝");
-    mark.font = Font.boldSystemFont(18);
-    mark.centerAlignText();
-    const day = w.addText(String(new Date().getDate()));
-    day.font = Font.boldRoundedSystemFont(14);
-    day.centerAlignText();
-    w.addSpacer();
   } else if (family.startsWith("accessory")) {
     // Pantalla de bloqueo: rectángulo debajo de la hora
     w.setPadding(0, 0, 0, 0);
