@@ -1,6 +1,10 @@
 // Impulso · Frase del día
-// Widget para la app Scriptable (iPhone). Muestra la misma frase del día que la app Impulso,
-// en la pantalla de bloqueo o en la de inicio. Se actualiza solo cada medianoche.
+// Widget para la app Scriptable (iPhone). Muestra la misma frase del día que la app Impulso.
+// Funciona con todos los tamaños de widget:
+//   Pantalla de bloqueo: en línea (encima de la hora), rectangular y circular.
+//   Pantalla de inicio, vista «Hoy» y StandBy: pequeño, mediano, grande y extra grande (iPad).
+// Se actualiza solo cada medianoche.
+// Si abres el script dentro de Scriptable, la frase se muestra a pantalla completa.
 // Opcional: en el campo «Parameter» del widget puedes escribir un tema:
 // marea, alba, bosque, noche, arena, lavanda, terraza, niebla u oceano.
 
@@ -49,10 +53,44 @@ function darken(hex, amount) {
   return "#" + f((v >> 16) & 255) + f((v >> 8) & 255) + f(v & 255);
 }
 
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
 const quotes = await loadQuotes();
 const q = quoteOfTheDay(quotes, new Date());
-const family = config.widgetFamily || "medium";
 const theme = THEMES[(args.widgetParameter || "").trim().toLowerCase()] || THEMES.marea;
+
+// ---------- Dentro de Scriptable: la frase a pantalla completa ----------
+if (!config.runsInWidget) {
+  const colors = theme.colors.map(c => darken(c, theme.scrim));
+  const html = `<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>
+  html, body { margin: 0; height: 100%; }
+  body {
+    min-height: 100vh; box-sizing: border-box;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: calc(env(safe-area-inset-top) + 32px) 32px calc(env(safe-area-inset-bottom) + 32px);
+    background: linear-gradient(160deg, ${colors.join(", ")}) fixed;
+    color: ${theme.text}; text-align: center;
+    -webkit-font-smoothing: antialiased;
+  }
+  .label { font: 600 13px -apple-system, system-ui; letter-spacing: .14em; opacity: .75; margin-bottom: 28px; }
+  .quote { font-family: Georgia, serif; font-size: clamp(28px, 8.5vw, 48px); line-height: 1.3; margin: 0; }
+  .author { font: 600 14px -apple-system, system-ui; letter-spacing: .12em; opacity: .8; margin-top: 24px; }
+</style></head><body>
+  <div class="label">FRASE DEL DÍA</div>
+  <p class="quote">${esc(q.text)}</p>
+  ${q.author ? `<div class="author">${esc(q.author.toUpperCase())}</div>` : ""}
+</body></html>`;
+  await WebView.loadHTML(html, null, null, true); // true = pantalla completa
+  Script.complete();
+  return;
+}
+
+// ---------- Widget ----------
+const family = config.widgetFamily || "large";
 
 const w = new ListWidget();
 w.url = APP_URL;
@@ -61,10 +99,28 @@ midnight.setHours(24, 0, 30, 0);
 w.refreshAfterDate = midnight;
 
 if (family === "accessoryInline") {
-  // Una línea encima de la hora
-  w.addText("❝ " + q.text);
+  // Pantalla de bloqueo: una línea encima de la hora
+  const t = w.addText("❝ " + q.text);
+  t.lineLimit = 1;
+  t.minimumScaleFactor = 0.7;
+} else if (family === "accessoryCircular") {
+  // Pantalla de bloqueo: círculo pequeño debajo de la hora. Al tocarlo se abre la frase completa.
+  w.addAccessoryWidgetBackground = true;
+  w.setPadding(4, 4, 4, 4);
+  w.addSpacer();
+  const row = w.addStack();
+  row.addSpacer();
+  const icon = row.addImage(SFSymbol.named("quote.opening").image);
+  icon.imageSize = new Size(16, 16);
+  icon.tintColor = Color.white();
+  row.addSpacer();
+  w.addSpacer(2);
+  const day = w.addText(String(new Date().getDate()));
+  day.font = Font.boldRoundedSystemFont(15);
+  day.centerAlignText();
+  w.addSpacer();
 } else if (family.startsWith("accessory")) {
-  // Pantalla de bloqueo, debajo de la hora
+  // Pantalla de bloqueo: rectángulo debajo de la hora
   const t = w.addText(q.text);
   t.font = Font.mediumSystemFont(13);
   t.minimumScaleFactor = 0.6;
@@ -76,41 +132,44 @@ if (family === "accessoryInline") {
     a.lineLimit = 1;
   }
 } else {
-  // Pantalla de inicio, con el degradado del tema
+  // Pantalla de inicio, vista «Hoy» y StandBy: pequeño, mediano, grande y extra grande (iPad).
+  // El degradado ocupa todo el widget y la frase se agranda para llenarlo.
   const g = new LinearGradient();
   g.colors = theme.colors.map(c => new Color(darken(c, theme.scrim)));
   g.locations = theme.colors.map((_, i) => i / (theme.colors.length - 1));
   g.startPoint = new Point(0.3, 0);
   g.endPoint = new Point(0.7, 1);
   w.backgroundGradient = g;
-  w.setPadding(14, 16, 14, 16);
 
-  const size = family === "small" ? 16 : family === "large" ? 28 : 20;
-  if (family === "large") {
+  const big = family === "large" || family === "extraLarge";
+  w.setPadding(big ? 18 : 12, big ? 18 : 12, big ? 18 : 12, big ? 18 : 12);
+
+  // Tamaño grande de partida; minimumScaleFactor lo reduce lo justo para que quepa
+  const size = { small: 26, medium: 30, large: 44, extraLarge: 56 }[family] || 30;
+
+  if (big) {
     const label = w.addText("FRASE DEL DÍA");
-    label.font = Font.semiboldSystemFont(11);
+    label.font = Font.semiboldSystemFont(family === "extraLarge" ? 14 : 12);
     label.textColor = new Color(theme.text, 0.75);
     label.centerAlignText();
+    w.addSpacer(8);
   }
   w.addSpacer();
   const t = w.addText(q.text);
   t.font = new Font("Georgia", size);
   t.textColor = new Color(theme.text);
   t.centerAlignText();
-  t.minimumScaleFactor = 0.5;
+  t.minimumScaleFactor = 0.25;
   if (q.author) {
-    w.addSpacer(6);
+    w.addSpacer(big ? 10 : 6);
     const a = w.addText(q.author.toUpperCase());
-    a.font = Font.semiboldSystemFont(family === "small" ? 8 : 10);
+    a.font = Font.semiboldSystemFont(family === "small" ? 9 : big ? 13 : 11);
     a.textColor = new Color(theme.text, 0.8);
     a.centerAlignText();
+    a.lineLimit = 1;
   }
   w.addSpacer();
 }
 
-if (config.runsInWidget) {
-  Script.setWidget(w);
-} else {
-  await w.presentMedium();
-}
+Script.setWidget(w);
 Script.complete();
